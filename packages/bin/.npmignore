@@ -1,0 +1,55 @@
+# Source files
+src/
+tsconfig.json
+tsup.config.ts
+*.ts
+
+# Development files
+node_modules/
+.git/
+.gitignore
+
+# Build scripts and development tools
+scripts/
+
+# Testing and examples
+examples/
+test/
+tests/
+*.test.*
+*.spec.*
+
+# Documentation (except README)
+docs/
+*.md
+!README.md
+PUBLISHING.md
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+
+# Cache directories
+.cache/
+.nyc_output/
+coverage/
+
+# Lock files (keep package-lock.json if needed)
+pnpm-lock.yaml
+yarn.lock
+
+# TypeScript build info
+*.tsbuildinfo

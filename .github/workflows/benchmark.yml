@@ -1,0 +1,270 @@
+name: Benchmark Tools
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_all_tools:
+        description: "Run benchmarks for all tools"
+        required: false
+        default: true
+        type: boolean
+      run_rsdiff:
+        description: "Run rsdiff benchmarks only"
+        required: false
+        default: false
+        type: boolean
+      run_odiff:
+        description: "Run odiff benchmarks only"
+        required: false
+        default: false
+        type: boolean
+      run_pixelmatch:
+        description: "Run pixelmatch benchmarks only"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  BENCHMARK_OUTPUTS_DIR: ${{ github.workspace }}/benchmark-outputs
+  IMAGES_DIR: ${{ github.workspace }}/images
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      image-pairs: ${{ steps.find-pairs.outputs.pairs }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Find image pairs
+        id: find-pairs
+        run: |
+          # Find image pairs for comparison
+          IMAGE_PAIRS=()
+          for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
+            if [[ -f "$img1" ]]; then
+              base_name=$(basename "$img1" | sed 's/\.[^.]*$//')
+              # Look for corresponding image with -1 suffix
+              img2="$IMAGES_DIR/${base_name%-1}.png"
+              if [[ -f "$img2" && "$img1" != "$img2" ]]; then
+                IMAGE_PAIRS+=("$img1:$img2")
+              fi
+            fi
+          done
+
+          if [ ${#IMAGE_PAIRS[@]} -eq 0 ]; then
+            echo "No image pairs found. Looking for any two images..."
+            # Fallback: use first two images
+            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
+            if [ ${#IMAGES[@]} -ge 2 ]; then
+              IMAGE_PAIRS+=("${IMAGES[0]}:${IMAGES[1]}")
+            fi
+          fi
+
+          echo "Found ${#IMAGE_PAIRS[@]} image pair(s):"
+          for pair in "${IMAGE_PAIRS[@]}"; do
+            echo "   $(basename "${pair%:*}") ↔ $(basename "${pair#*:}")"
+          done
+
+          # Convert to JSON array for GitHub Actions
+          pairs_json=$(printf '%s\n' "${IMAGE_PAIRS[@]}" | jq -R . | jq -s .)
+          echo "pairs=$pairs_json" >> $GITHUB_OUTPUT
+
+  benchmark-rsdiff:
+    needs: setup
+    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_rsdiff == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build rsdiff
+        run: |
+          cargo build --release
+          sudo cp target/release/rsdiff /usr/local/bin/
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          sudo mv hyperfine /usr/local/bin/
+
+      - name: Create benchmark outputs directory
+        run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
+
+      - name: Run rsdiff benchmark
+        run: |
+          img1="${MATRIX_IMAGE_PAIR%:*}"
+          img2="${MATRIX_IMAGE_PAIR#*:}"
+          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+
+          echo "🏃 Running rsdiff benchmark for: $pair_name"
+
+          hyperfine -i \
+            --warmup 3 \
+            --min-runs 50 \
+            --max-runs 100 \
+            --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
+            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
+            "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: rsdiff-benchmark-${{ matrix.image-pair }}
+          path: |
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.json
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.md
+            rsdiff_*_diff.png
+
+  benchmark-odiff:
+    needs: setup
+    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_odiff == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: pnpm i
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          sudo mv hyperfine /usr/local/bin/
+
+      - name: Create benchmark outputs directory
+        run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
+
+      - name: Run odiff benchmark
+        run: |
+          img1="${MATRIX_IMAGE_PAIR%:*}"
+          img2="${MATRIX_IMAGE_PAIR#*:}"
+          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+
+          echo "🏃 Running odiff benchmark for: $pair_name"
+
+          hyperfine -i \
+            --warmup 3 \
+            --min-runs 50 \
+            --max-runs 100 \
+            --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
+            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
+            "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: odiff-benchmark-${{ matrix.image-pair }}
+          path: |
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.json
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.md
+            odiff_*_diff.png
+
+  benchmark-pixelmatch:
+    needs: setup
+    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_pixelmatch == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          sudo mv hyperfine /usr/local/bin/
+
+      - name: Create benchmark outputs directory
+        run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
+
+      - name: Run pixelmatch benchmark
+        run: |
+          img1="${MATRIX_IMAGE_PAIR%:*}"
+          img2="${MATRIX_IMAGE_PAIR#*:}"
+          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+
+          echo "🏃 Running pixelmatch benchmark for: $pair_name"
+
+          hyperfine -i \
+            --warmup 3 \
+            --min-runs 50 \
+            --max-runs 100 \
+            --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
+            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
+            "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixelmatch-benchmark-${{ matrix.image-pair }}
+          path: |
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.json
+            ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.md
+            pixelmatch_*_diff.png
+
+  summary:
+    needs: [benchmark-rsdiff, benchmark-odiff, benchmark-pixelmatch]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: benchmark-artifacts
+
+      - name: Generate benchmark summary
+        run: |
+          echo "## 📊 Benchmark Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Find all JSON files and generate summary
+          find benchmark-artifacts -name "*.json" | while read -r json_file; do
+            tool_name=$(basename "$json_file" | cut -d'_' -f1)
+            pair_name=$(basename "$json_file" | sed 's/^[^_]*_//' | sed 's/\.json$//')
+            
+            # Extract mean time from JSON (requires jq)
+            if command -v jq &> /dev/null; then
+              mean_time=$(jq -r '.results[0].mean' "$json_file" 2>/dev/null || echo "N/A")
+              echo "- **$tool_name** ($pair_name): ${mean_time}s" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **$tool_name** ($pair_name): Results available" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📁 Full results available in workflow artifacts above." >> $GITHUB_STEP_SUMMARY

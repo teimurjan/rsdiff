@@ -1,0 +1,44 @@
+#!/bin/sh
+basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+
+case `uname` in
+    *CYGWIN*) basedir=`cygpath -w "$basedir"`;;
+esac
+
+# Get the platform-specific binary
+PLATFORM=$(uname -s)
+ARCH=$(uname -m)
+
+case "$PLATFORM" in
+    Darwin)
+        if [ "$ARCH" = "arm64" ]; then
+            BINARY="rsdiff-macos-arm64"
+        else
+            BINARY="rsdiff-macos-x64"
+        fi
+        ;;
+    Linux)
+        if [ "$ARCH" = "aarch64" ]; then
+            BINARY="rsdiff-linux-arm64"
+        else
+            BINARY="rsdiff-linux-x64"
+        fi
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        BINARY="rsdiff-windows-x64.exe"
+        ;;
+    *)
+        echo "Unsupported platform: $PLATFORM $ARCH"
+        exit 1
+        ;;
+esac
+
+BINARY_PATH="$basedir/../binaries/$BINARY"
+
+if [ ! -x "$BINARY_PATH" ]; then
+    echo "Binary not found: $BINARY_PATH"
+    exit 1
+fi
+
+# Execute the binary with all arguments
+exec "$BINARY_PATH" "$@"

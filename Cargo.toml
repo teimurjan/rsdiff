@@ -1,0 +1,47 @@
+[package]
+name = "rsdiff"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Tiny Rust+WASM visual diff with YIQ metric and AA detection"
+repository = "https://github.com/teimurjan/rsdiff"
+
+
+
+
+[lib]
+crate-type = ["rlib"]
+
+
+[features]
+default = []
+
+
+[dependencies]
+# JSON serialization for CLI output
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+wide = "0.7"  # For safe SIMD
+
+# Image decoding (now mandatory, disable all extras to keep size small)
+image = { version = "0.24", default-features = false, features = [
+  "png",
+  "jpeg",
+  "tiff",
+] }
+
+
+[[bin]]
+name = "rsdiff"
+path = "src/main.rs"
+
+[[example]]
+name = "png"
+path = "examples/compare/png.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"   # minimize size (use "s" if you prefer speed/size balance)
+strip = true

@@ -1,0 +1,10 @@
+{
+  "name": "@rsdiff/root",
+  "version": "0.0.1",
+  "description": "Root package for rsdiff",
+  "devDependencies": {
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0",
+    "odiff-bin": "^3.2.1"
+  }
+}

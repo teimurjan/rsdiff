@@ -1,0 +1,65 @@
+{
+  "name": "@rsdiff/bin",
+  "version": "0.0.1",
+  "description": "Fast image diffing tool with cross-platform binaries",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "rsdiff": "./bin/rsdiff"
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "binaries/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:lib",
+    "build:lib": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "image",
+    "diff",
+    "visual",
+    "testing",
+    "comparison",
+    "rust",
+    "fast",
+    "cross-platform"
+  ],
+  "author": "Teimur Gasanov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/teimurjan/rsdiff",
+    "directory": "packages/bin"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "execa": "^8.0.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
