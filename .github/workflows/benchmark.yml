@@ -67,6 +67,7 @@ jobs:
                 echo "Benchmarking: $pair_name"
                 
                 hyperfine -i \
+                  --command-name "rsdiff" \
                   --warmup 3 \
                   --min-runs 50 \
                   --max-runs 100 \
@@ -76,26 +77,6 @@ jobs:
               fi
             fi
           done
-
-          # Fallback: if no pairs found, use first two images
-          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/rsdiff_"*.json ]; then
-            echo "No image pairs found, using first two images..."
-            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
-            if [ ${#IMAGES[@]} -ge 2 ]; then
-              img1="${IMAGES[0]}"
-              img2="${IMAGES[1]}"
-              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
-              echo "Benchmarking: $pair_name"
-              
-              hyperfine -i \
-                --warmup 3 \
-                --min-runs 50 \
-                --max-runs 100 \
-                --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
-                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-                "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
-            fi
-          fi
 
       - name: Upload rsdiff results
         uses: actions/upload-artifact@v4
@@ -153,6 +134,7 @@ jobs:
                 echo "Benchmarking: $pair_name"
                 
                 hyperfine -i \
+                  --command-name "odiff" \
                   --warmup 3 \
                   --min-runs 50 \
                   --max-runs 100 \
@@ -162,26 +144,6 @@ jobs:
               fi
             fi
           done
-
-          # Fallback: if no pairs found, use first two images
-          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/odiff_"*.json ]; then
-            echo "No image pairs found, using first two images..."
-            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
-            if [ ${#IMAGES[@]} -ge 2 ]; then
-              img1="${IMAGES[0]}"
-              img2="${IMAGES[1]}"
-              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
-              echo "Benchmarking: $pair_name"
-              
-              hyperfine -i \
-                --warmup 3 \
-                --min-runs 50 \
-                --max-runs 100 \
-                --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
-                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
-                "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
-            fi
-          fi
 
       - name: Upload odiff results
         uses: actions/upload-artifact@v4
@@ -239,6 +201,7 @@ jobs:
                 echo "Benchmarking: $pair_name"
                 
                 hyperfine -i \
+                  --command-name "pixelmatch" \
                   --warmup 3 \
                   --min-runs 50 \
                   --max-runs 100 \
@@ -248,26 +211,6 @@ jobs:
               fi
             fi
           done
-
-          # Fallback: if no pairs found, use first two images
-          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_"*.json ]; then
-            echo "No image pairs found, using first two images..."
-            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
-            if [ ${#IMAGES[@]} -ge 2 ]; then
-              img1="${IMAGES[0]}"
-              img2="${IMAGES[1]}"
-              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
-              echo "Benchmarking: $pair_name"
-              
-              hyperfine -i \
-                --warmup 3 \
-                --min-runs 50 \
-                --max-runs 100 \
-                --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
-                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
-                "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
-            fi
-          fi
 
       - name: Upload pixelmatch results
         uses: actions/upload-artifact@v4

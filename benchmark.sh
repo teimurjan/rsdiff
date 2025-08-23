@@ -71,16 +71,18 @@ for pair in "${IMAGE_PAIRS[@]}"; do
     # Benchmark rsdiff
     echo "🦀 Benchmarking rsdiff..."
     hyperfine -i \
+        --command-name "rsdiff" \
         --warmup 3 \
         --min-runs 50 \
         --max-runs 100 \
         --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
         --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-        "packages/bin/rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+        "packages/bin/bin/rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
     
     # Benchmark odiff
     echo "🐌 Benchmarking odiff..."
     hyperfine -i \
+        --command-name "odiff" \
         --warmup 3 \
         --min-runs 50 \
         --max-runs 100 \
@@ -91,6 +93,7 @@ for pair in "${IMAGE_PAIRS[@]}"; do
     # Benchmark pixelmatch
     echo "🔍 Benchmarking pixelmatch..."
     hyperfine -i \
+        --command-name "pixelmatch" \
         --warmup 3 \
         --min-runs 50 \
         --max-runs 100 \
