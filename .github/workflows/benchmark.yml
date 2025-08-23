@@ -9,13 +9,45 @@ on:
 env:
   BENCHMARK_OUTPUTS_DIR: ${{ github.workspace }}/benchmark-outputs
   IMAGES_DIR: ${{ github.workspace }}/images
+  HYPERFINE_VERSION: "1.19.0"
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      hyperfine-cache-key: ${{ steps.hyperfine-cache.outputs.cache-hit }}
+    steps:
+      - name: Cache hyperfine
+        id: hyperfine-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hyperfine
+          key: hyperfine-${{ env.HYPERFINE_VERSION }}-linux-musl
+
+      - name: Download and install hyperfine
+        if: steps.hyperfine-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/hyperfine
+          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
+          tar -xzf hyperfine.tar.gz
+          cp hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /tmp/hyperfine/
+          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
+
   benchmark-rsdiff:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Cache hyperfine
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hyperfine
+          key: hyperfine-${{ env.HYPERFINE_VERSION }}-linux-musl
+
+      - name: Install hyperfine
+        run: sudo cp /tmp/hyperfine/hyperfine /usr/local/bin/
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -27,14 +59,6 @@ jobs:
         run: |
           cargo build --release
           sudo cp target/release/rsdiff /usr/local/bin/
-
-      - name: Install hyperfine
-        run: |
-          HYPERFINE_VERSION="1.19.0"
-          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
-          tar -xzf hyperfine.tar.gz
-          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
-          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
@@ -94,10 +118,20 @@ jobs:
             rsdiff_*_diff.png
 
   benchmark-odiff:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Cache hyperfine
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hyperfine
+          key: hyperfine-${{ env.HYPERFINE_VERSION }}-linux-musl
+
+      - name: Install hyperfine
+        run: sudo cp /tmp/hyperfine/hyperfine /usr/local/bin/
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -111,14 +145,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Install hyperfine
-        run: |
-          HYPERFINE_VERSION="1.18.0"
-          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
-          tar -xzf hyperfine.tar.gz
-          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
-          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
@@ -178,26 +204,33 @@ jobs:
             odiff_*_diff.png
 
   benchmark-pixelmatch:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Cache hyperfine
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hyperfine
+          key: hyperfine-${{ env.HYPERFINE_VERSION }}-linux-musl
+
+      - name: Install hyperfine
+        run: sudo cp /tmp/hyperfine/hyperfine /usr/local/bin/
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
 
-      - name: Install hyperfine
-        run: |
-          HYPERFINE_VERSION="1.18.0"
-          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
-          tar -xzf hyperfine.tar.gz
-          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
-          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
+      - name: Install dependencies
+        run: pnpm install
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
