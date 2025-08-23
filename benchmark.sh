@@ -76,7 +76,7 @@ for pair in "${IMAGE_PAIRS[@]}"; do
         --max-runs 100 \
         --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
         --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-        "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+        "packages/bin/rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
     
     # Benchmark odiff
     echo "🐌 Benchmarking odiff..."
