@@ -5,99 +5,14 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  workflow_dispatch:
-    inputs:
-      run_all_tools:
-        description: "Run benchmarks for all tools"
-        required: false
-        default: true
-        type: boolean
-      run_rsdiff:
-        description: "Run rsdiff benchmarks only"
-        required: false
-        default: false
-        type: boolean
-      run_odiff:
-        description: "Run odiff benchmarks only"
-        required: false
-        default: false
-        type: boolean
-      run_pixelmatch:
-        description: "Run pixelmatch benchmarks only"
-        required: false
-        default: false
-        type: boolean
 
 env:
   BENCHMARK_OUTPUTS_DIR: ${{ github.workspace }}/benchmark-outputs
   IMAGES_DIR: ${{ github.workspace }}/images
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      image-pairs: ${{ steps.find-pairs.outputs.pairs }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Find image pairs
-        id: find-pairs
-        run: |
-          # Find image pairs for comparison
-          IMAGE_PAIRS=()
-          for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
-            if [[ -f "$img1" ]]; then
-              base_name=$(basename "$img1" | sed 's/\.[^.]*$//')
-              # Look for corresponding image with -1 suffix
-              img2="$IMAGES_DIR/${base_name%-1}.png"
-              if [[ -f "$img2" && "$img1" != "$img2" ]]; then
-                # Use pipe separator instead of colon to avoid issues
-                IMAGE_PAIRS+=("$img1|$img2")
-              fi
-            fi
-          done
-
-          if [ ${#IMAGE_PAIRS[@]} -eq 0 ]; then
-            echo "No image pairs found. Looking for any two images..."
-            # Fallback: use first two images
-            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
-            if [ ${#IMAGES[@]} -ge 2 ]; then
-              IMAGE_PAIRS+=("${IMAGES[0]}|${IMAGES[1]}")
-            fi
-          fi
-
-          echo "Found ${#IMAGE_PAIRS[@]} image pair(s):"
-          for pair in "${IMAGE_PAIRS[@]}"; do
-            echo "   $(basename "${pair%|*}") ↔ $(basename "${pair#*|}")"
-          done
-
-          # Convert to JSON array for GitHub Actions - ensure proper escaping
-          if [ ${#IMAGE_PAIRS[@]} -gt 0 ]; then
-            pairs_json="["
-            for i in "${!IMAGE_PAIRS[@]}"; do
-              if [ $i -gt 0 ]; then pairs_json+=","; fi
-              # Properly escape the pipe-separated pair for JSON
-              pairs_json+="\"${IMAGE_PAIRS[$i]}\""
-            done
-            pairs_json+="]"
-          else
-            pairs_json="[]"
-          fi
-
-          echo "Generated JSON: $pairs_json"
-          echo "pairs=$pairs_json" >> $GITHUB_OUTPUT
-
-      - name: Install jq for JSON processing
-        run: sudo apt-get update && sudo apt-get install -y jq
-
   benchmark-rsdiff:
-    needs: setup
-    if: ${{ inputs.run_all_tools == true || inputs.run_rsdiff == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -121,39 +36,62 @@ jobs:
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
 
-      - name: Run rsdiff benchmark
+      - name: Run rsdiff benchmarks
         run: |
-          PAIR="${{ matrix.image-pair }}"
-          img1="${PAIR%|*}"
-          img2="${PAIR#*|}"
-          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+          echo "🏃 Running rsdiff benchmarks..."
+          
+          # Find image pairs and run benchmarks
+          for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
+            if [[ -f "$img1" ]]; then
+              base_name=$(basename "$img1" | sed 's/\.[^.]*$//')
+              # Look for corresponding image with -1 suffix
+              img2="$IMAGES_DIR/${base_name%-1}.png"
+              if [[ -f "$img2" && "$img1" != "$img2" ]]; then
+                pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+                echo "Benchmarking: $pair_name"
+                
+                hyperfine -i \
+                  --warmup 3 \
+                  --min-runs 50 \
+                  --max-runs 100 \
+                  --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
+                  --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
+                  "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+              fi
+            fi
+          done
 
-          echo "🏃 Running rsdiff benchmark for: $pair_name"
+          # Fallback: if no pairs found, use first two images
+          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/rsdiff_"*.json ]; then
+            echo "No image pairs found, using first two images..."
+            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
+            if [ ${#IMAGES[@]} -ge 2 ]; then
+              img1="${IMAGES[0]}"
+              img2="${IMAGES[1]}"
+              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+              echo "Benchmarking: $pair_name"
+              
+              hyperfine -i \
+                --warmup 3 \
+                --min-runs 50 \
+                --max-runs 100 \
+                --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
+                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
+                "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+            fi
+          fi
 
-          hyperfine -i \
-            --warmup 3 \
-            --min-runs 50 \
-            --max-runs 100 \
-            --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
-            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-            "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
-
-      - name: Upload benchmark results
+      - name: Upload rsdiff results
         uses: actions/upload-artifact@v4
         with:
-          name: rsdiff-benchmark-${{ strategy.job-index }}
+          name: rsdiff-benchmark-results
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.md
             rsdiff_*_diff.png
 
   benchmark-odiff:
-    needs: setup
-    if: ${{ inputs.run_all_tools == true || inputs.run_odiff == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -179,39 +117,62 @@ jobs:
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
 
-      - name: Run odiff benchmark
+      - name: Run odiff benchmarks
         run: |
-          PAIR="${{ matrix.image-pair }}"
-          img1="${PAIR%|*}"
-          img2="${PAIR#*|}"
-          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+          echo "🏃 Running odiff benchmarks..."
+          
+          # Find image pairs and run benchmarks
+          for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
+            if [[ -f "$img1" ]]; then
+              base_name=$(basename "$img1" | sed 's/\.[^.]*$//')
+              # Look for corresponding image with -1 suffix
+              img2="$IMAGES_DIR/${base_name%-1}.png"
+              if [[ -f "$img2" && "$img1" != "$img2" ]]; then
+                pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+                echo "Benchmarking: $pair_name"
+                
+                hyperfine -i \
+                  --warmup 3 \
+                  --min-runs 50 \
+                  --max-runs 100 \
+                  --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
+                  --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
+                  "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
+              fi
+            fi
+          done
 
-          echo "🏃 Running odiff benchmark for: $pair_name"
+          # Fallback: if no pairs found, use first two images
+          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/odiff_"*.json ]; then
+            echo "No image pairs found, using first two images..."
+            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
+            if [ ${#IMAGES[@]} -ge 2 ]; then
+              img1="${IMAGES[0]}"
+              img2="${IMAGES[1]}"
+              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+              echo "Benchmarking: $pair_name"
+              
+              hyperfine -i \
+                --warmup 3 \
+                --min-runs 50 \
+                --max-runs 100 \
+                --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
+                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
+                "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
+            fi
+          fi
 
-          hyperfine -i \
-            --warmup 3 \
-            --min-runs 50 \
-            --max-runs 100 \
-            --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
-            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
-            "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
-
-      - name: Upload benchmark results
+      - name: Upload odiff results
         uses: actions/upload-artifact@v4
         with:
-          name: odiff-benchmark-${{ strategy.job-index }}
+          name: odiff-benchmark-results
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.md
             odiff_*_diff.png
 
   benchmark-pixelmatch:
-    needs: setup
-    if: ${{ inputs.run_all_tools == true || inputs.run_pixelmatch == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image-pair: ${{ fromJson(needs.setup.outputs.image-pairs) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -232,27 +193,55 @@ jobs:
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
 
-      - name: Run pixelmatch benchmark
+      - name: Run pixelmatch benchmarks
         run: |
-          PAIR="${{ matrix.image-pair }}"
-          img1="${PAIR%|*}"
-          img2="${PAIR#*|}"
-          pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+          echo "🏃 Running pixelmatch benchmarks..."
+          
+          # Find image pairs and run benchmarks
+          for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
+            if [[ -f "$img1" ]]; then
+              base_name=$(basename "$img1" | sed 's/\.[^.]*$//')
+              # Look for corresponding image with -1 suffix
+              img2="$IMAGES_DIR/${base_name%-1}.png"
+              if [[ -f "$img2" && "$img1" != "$img2" ]]; then
+                pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+                echo "Benchmarking: $pair_name"
+                
+                hyperfine -i \
+                  --warmup 3 \
+                  --min-runs 50 \
+                  --max-runs 100 \
+                  --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
+                  --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
+                  "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
+              fi
+            fi
+          done
 
-          echo "🏃 Running pixelmatch benchmark for: $pair_name"
+          # Fallback: if no pairs found, use first two images
+          if [ ! -f "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_"*.json ]; then
+            echo "No image pairs found, using first two images..."
+            IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
+            if [ ${#IMAGES[@]} -ge 2 ]; then
+              img1="${IMAGES[0]}"
+              img2="${IMAGES[1]}"
+              pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
+              echo "Benchmarking: $pair_name"
+              
+              hyperfine -i \
+                --warmup 3 \
+                --min-runs 50 \
+                --max-runs 100 \
+                --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
+                --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
+                "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
+            fi
+          fi
 
-          hyperfine -i \
-            --warmup 3 \
-            --min-runs 50 \
-            --max-runs 100 \
-            --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
-            --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
-            "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
-
-      - name: Upload benchmark results
+      - name: Upload pixelmatch results
         uses: actions/upload-artifact@v4
         with:
-          name: pixelmatch-benchmark-${{ strategy.job-index }}
+          name: pixelmatch-benchmark-results
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.md
