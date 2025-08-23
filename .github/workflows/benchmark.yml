@@ -72,8 +72,20 @@ jobs:
             echo "   $(basename "${pair%|*}") ↔ $(basename "${pair#*|}")"
           done
 
-          # Convert to JSON array for GitHub Actions
-          pairs_json=$(printf '%s\n' "${IMAGE_PAIRS[@]}" | jq -R . | jq -s .)
+          # Convert to JSON array for GitHub Actions - ensure proper escaping
+          if [ ${#IMAGE_PAIRS[@]} -gt 0 ]; then
+            pairs_json="["
+            for i in "${!IMAGE_PAIRS[@]}"; do
+              if [ $i -gt 0 ]; then pairs_json+=","; fi
+              # Properly escape the pipe-separated pair for JSON
+              pairs_json+="\"${IMAGE_PAIRS[$i]}\""
+            done
+            pairs_json+="]"
+          else
+            pairs_json="[]"
+          fi
+
+          echo "Generated JSON: $pairs_json"
           echo "pairs=$pairs_json" >> $GITHUB_OUTPUT
 
       - name: Install jq for JSON processing
