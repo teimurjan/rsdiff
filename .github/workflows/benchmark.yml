@@ -52,7 +52,8 @@ jobs:
               # Look for corresponding image with -1 suffix
               img2="$IMAGES_DIR/${base_name%-1}.png"
               if [[ -f "$img2" && "$img1" != "$img2" ]]; then
-                IMAGE_PAIRS+=("$img1:$img2")
+                # Use pipe separator instead of colon to avoid issues
+                IMAGE_PAIRS+=("$img1|$img2")
               fi
             fi
           done
@@ -62,13 +63,13 @@ jobs:
             # Fallback: use first two images
             IMAGES=($(ls "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg 2>/dev/null | head -2))
             if [ ${#IMAGES[@]} -ge 2 ]; then
-              IMAGE_PAIRS+=("${IMAGES[0]}:${IMAGES[1]}")
+              IMAGE_PAIRS+=("${IMAGES[0]}|${IMAGES[1]}")
             fi
           fi
 
           echo "Found ${#IMAGE_PAIRS[@]} image pair(s):"
           for pair in "${IMAGE_PAIRS[@]}"; do
-            echo "   $(basename "${pair%:*}") ↔ $(basename "${pair#*:}")"
+            echo "   $(basename "${pair%|*}") ↔ $(basename "${pair#*|}")"
           done
 
           # Convert to JSON array for GitHub Actions
@@ -110,8 +111,9 @@ jobs:
 
       - name: Run rsdiff benchmark
         run: |
-          img1="${{ matrix.image-pair }}"
-          img2="${{ matrix.image-pair }}"
+          PAIR="${{ matrix.image-pair }}"
+          img1="${PAIR%|*}"
+          img2="${PAIR#*|}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running rsdiff benchmark for: $pair_name"
@@ -167,8 +169,9 @@ jobs:
 
       - name: Run odiff benchmark
         run: |
-          img1="${{ matrix.image-pair }}"
-          img2="${{ matrix.image-pair }}"
+          PAIR="${{ matrix.image-pair }}"
+          img1="${PAIR%|*}"
+          img2="${PAIR#*|}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running odiff benchmark for: $pair_name"
@@ -219,8 +222,9 @@ jobs:
 
       - name: Run pixelmatch benchmark
         run: |
-          img1="${{ matrix.image-pair }}"
-          img2="${{ matrix.image-pair }}"
+          PAIR="${{ matrix.image-pair }}"
+          img1="${PAIR%|*}"
+          img2="${PAIR#*|}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running pixelmatch benchmark for: $pair_name"
