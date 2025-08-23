@@ -49,17 +49,6 @@ jobs:
       - name: Install hyperfine
         run: sudo cp /tmp/hyperfine/hyperfine /usr/local/bin/
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Build rsdiff
-        run: |
-          cargo build --release
-          sudo cp target/release/rsdiff /usr/local/bin/
-
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
 
