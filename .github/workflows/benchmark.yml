@@ -73,7 +73,7 @@ jobs:
                   --max-runs 100 \
                   --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
                   --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-                  "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+                  "packages/bin/bin/rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
               fi
             fi
           done
