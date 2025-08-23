@@ -36,6 +36,16 @@ echo "Building Linux arm64 (musl, static)"
 cargo zigbuild --release --target aarch64-unknown-linux-musl
 cp "target/aarch64-unknown-linux-musl/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-linux-arm64"
 
+# ---- Linux x64 (glibc, x86-64-v3) ----
+cargo install cross --git https://github.com/cross-rs/cross
+ensure_installed cross "cargo install cross --git https://github.com/cross-rs/cross"
+
+echo "Building Linux x64 (glibc, x86-64-v3)"
+RUSTFLAGS="-C target-cpu=x86-64-v3 -C lto=thin -C codegen-units=1" \
+  cross build --release --target x86_64-unknown-linux-gnu
+cp target/x86_64-unknown-linux-gnu/release/$BIN_NAME \
+   "$DIST_DIR/${BIN_NAME}-linux-x64-gnu-v3"
+
 # ---- Windows x64 (MSVC) via cargo-xwin ----
 ensure_installed cargo-xwin "cargo install cargo-xwin"
 rustup target add x86_64-pc-windows-msvc || true

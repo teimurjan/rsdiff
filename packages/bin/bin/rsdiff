@@ -1,44 +1,92 @@
 #!/bin/sh
-basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+set -eu
 
-case `uname` in
-    *CYGWIN*) basedir=`cygpath -w "$basedir"`;;
+basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+case "$(uname)" in
+  *CYGWIN*) basedir=$(cygpath -w "$basedir");;
 esac
 
-# Get the platform-specific binary
 PLATFORM=$(uname -s)
 ARCH=$(uname -m)
 
+pick_linux_x64() {
+  # Paths
+  FAST_GNU_V3="$basedir/../binaries/rsdiff-linux-x64-gnu-v3"
+  PORTABLE_MUSL="$basedir/../binaries/rsdiff-linux-x64"
+
+  # 1) Must have glibc to run the gnu build
+  has_glibc=false
+  if command -v getconf >/dev/null 2>&1; then
+    # getconf GNU_LIBC_VERSION prints e.g. "glibc 2.35" on glibc systems
+    if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+      has_glibc=true
+    fi
+  fi
+
+  # 2) Must support x86-64-v3 (roughly AVX2/BMI2/FMA)
+  has_v3=false
+  if [ -r /proc/cpuinfo ]; then
+    if grep -qiE 'avx2' /proc/cpuinfo && grep -qiE 'bmi2' /proc/cpuinfo; then
+      has_v3=true
+    fi
+  fi
+
+  # Prefer fast if possible, otherwise portable
+  if $has_glibc && $has_v3 && [ -x "$FAST_GNU_V3" ]; then
+    echo "$FAST_GNU_V3"
+    return
+  fi
+
+  # Fallback to portable musl
+  if [ -x "$PORTABLE_MUSL" ]; then
+    echo "$PORTABLE_MUSL"
+    return
+  fi
+
+  # Last resort: if fast exists but musl doesn’t, try fast and hope glibc exists
+  if [ -x "$FAST_GNU_V3" ]; then
+    echo "$FAST_GNU_V3"
+    return
+  fi
+
+  echo "Binary not found for Linux x64 (looked for $(basename "$FAST_GNU_V3") and $(basename "$PORTABLE_MUSL"))" >&2
+  exit 1
+}
+
 case "$PLATFORM" in
-    Darwin)
-        if [ "$ARCH" = "arm64" ]; then
-            BINARY="rsdiff-macos-arm64"
-        else
-            BINARY="rsdiff-macos-x64"
-        fi
+  Darwin)
+    if [ "$ARCH" = "arm64" ]; then
+      BINARY="$basedir/../binaries/rsdiff-macos-arm64"
+    else
+      BINARY="$basedir/../binaries/rsdiff-macos-x64"
+    fi
+    ;;
+  Linux)
+    case "$ARCH" in
+      aarch64|arm64)
+        BINARY="$basedir/../binaries/rsdiff-linux-arm64"
         ;;
-    Linux)
-        if [ "$ARCH" = "aarch64" ]; then
-            BINARY="rsdiff-linux-arm64"
-        else
-            BINARY="rsdiff-linux-x64"
-        fi
+      x86_64|amd64)
+        BINARY="$(pick_linux_x64)"
         ;;
-    MINGW*|MSYS*|CYGWIN*)
-        BINARY="rsdiff-windows-x64.exe"
-        ;;
-    *)
-        echo "Unsupported platform: $PLATFORM $ARCH"
+      *)
+        echo "Unsupported Linux arch: $ARCH" >&2
         exit 1
         ;;
+    esac
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    BINARY="$basedir/../binaries/rsdiff-windows-x64.exe"
+    ;;
+  *)
+    echo "Unsupported platform: $PLATFORM $ARCH" >&2
+    exit 1
+    ;;
 esac
 
-BINARY_PATH="$basedir/../binaries/$BINARY"
-
-if [ ! -x "$BINARY_PATH" ]; then
-    echo "Binary not found: $BINARY_PATH"
-    exit 1
+if [ ! -x "$BINARY" ]; then
+  echo "Binary not found or not executable: $BINARY" >&2
+  exit 1
 fi
 
-# Execute the binary with all arguments
-exec "$BINARY_PATH" "$@"
+exec "$BINARY" "$@"
