@@ -75,9 +75,12 @@ jobs:
           pairs_json=$(printf '%s\n' "${IMAGE_PAIRS[@]}" | jq -R . | jq -s .)
           echo "pairs=$pairs_json" >> $GITHUB_OUTPUT
 
+      - name: Install jq for JSON processing
+        run: sudo apt-get update && sudo apt-get install -y jq
+
   benchmark-rsdiff:
     needs: setup
-    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_rsdiff == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    if: ${{ inputs.run_all_tools == true || inputs.run_rsdiff == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -107,8 +110,8 @@ jobs:
 
       - name: Run rsdiff benchmark
         run: |
-          img1="${MATRIX_IMAGE_PAIR%:*}"
-          img2="${MATRIX_IMAGE_PAIR#*:}"
+          img1="${{ matrix.image-pair }}"
+          img2="${{ matrix.image-pair }}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running rsdiff benchmark for: $pair_name"
@@ -124,7 +127,7 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: rsdiff-benchmark-${{ matrix.image-pair }}
+          name: rsdiff-benchmark-${{ strategy.job-index }}
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/rsdiff_*.md
@@ -132,7 +135,7 @@ jobs:
 
   benchmark-odiff:
     needs: setup
-    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_odiff == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    if: ${{ inputs.run_all_tools == true || inputs.run_odiff == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -146,8 +149,13 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
       - name: Install dependencies
-        run: pnpm i
+        run: pnpm install
 
       - name: Install hyperfine
         run: |
@@ -159,8 +167,8 @@ jobs:
 
       - name: Run odiff benchmark
         run: |
-          img1="${MATRIX_IMAGE_PAIR%:*}"
-          img2="${MATRIX_IMAGE_PAIR#*:}"
+          img1="${{ matrix.image-pair }}"
+          img2="${{ matrix.image-pair }}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running odiff benchmark for: $pair_name"
@@ -176,7 +184,7 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: odiff-benchmark-${{ matrix.image-pair }}
+          name: odiff-benchmark-${{ strategy.job-index }}
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/odiff_*.md
@@ -184,7 +192,7 @@ jobs:
 
   benchmark-pixelmatch:
     needs: setup
-    if: ${{ github.event.inputs.run_all_tools == 'true' || github.event.inputs.run_pixelmatch == 'true' || (github.event.inputs.run_all_tools != 'false' && github.event.inputs.run_rsdiff != 'true' && github.event.inputs.run_odiff != 'true' && github.event.inputs.run_pixelmatch != 'true') }}
+    if: ${{ inputs.run_all_tools == true || inputs.run_pixelmatch == true || (inputs.run_all_tools != false && inputs.run_rsdiff != true && inputs.run_odiff != true && inputs.run_pixelmatch != true) }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -211,8 +219,8 @@ jobs:
 
       - name: Run pixelmatch benchmark
         run: |
-          img1="${MATRIX_IMAGE_PAIR%:*}"
-          img2="${MATRIX_IMAGE_PAIR#*:}"
+          img1="${{ matrix.image-pair }}"
+          img2="${{ matrix.image-pair }}"
           pair_name="$(basename "${img1%.*}")_vs_$(basename "${img2%.*}")"
 
           echo "🏃 Running pixelmatch benchmark for: $pair_name"
@@ -228,43 +236,8 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: pixelmatch-benchmark-${{ matrix.image-pair }}
+          name: pixelmatch-benchmark-${{ strategy.job-index }}
           path: |
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.json
             ${{ env.BENCHMARK_OUTPUTS_DIR }}/pixelmatch_*.md
             pixelmatch_*_diff.png
-
-  summary:
-    needs: [benchmark-rsdiff, benchmark-odiff, benchmark-pixelmatch]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download all benchmark artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: benchmark-artifacts
-
-      - name: Generate benchmark summary
-        run: |
-          echo "## 📊 Benchmark Results Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Find all JSON files and generate summary
-          find benchmark-artifacts -name "*.json" | while read -r json_file; do
-            tool_name=$(basename "$json_file" | cut -d'_' -f1)
-            pair_name=$(basename "$json_file" | sed 's/^[^_]*_//' | sed 's/\.json$//')
-            
-            # Extract mean time from JSON (requires jq)
-            if command -v jq &> /dev/null; then
-              mean_time=$(jq -r '.results[0].mean' "$json_file" 2>/dev/null || echo "N/A")
-              echo "- **$tool_name** ($pair_name): ${mean_time}s" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "- **$tool_name** ($pair_name): Results available" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📁 Full results available in workflow artifacts above." >> $GITHUB_STEP_SUMMARY
