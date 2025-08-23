@@ -30,8 +30,11 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          sudo mv hyperfine /usr/local/bin/
+          HYPERFINE_VERSION="1.19.0"
+          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
+          tar -xzf hyperfine.tar.gz
+          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
+          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
@@ -39,7 +42,7 @@ jobs:
       - name: Run rsdiff benchmarks
         run: |
           echo "🏃 Running rsdiff benchmarks..."
-          
+
           # Find image pairs and run benchmarks
           for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
             if [[ -f "$img1" ]]; then
@@ -111,8 +114,11 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          sudo mv hyperfine /usr/local/bin/
+          HYPERFINE_VERSION="1.18.0"
+          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
+          tar -xzf hyperfine.tar.gz
+          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
+          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
@@ -120,7 +126,7 @@ jobs:
       - name: Run odiff benchmarks
         run: |
           echo "🏃 Running odiff benchmarks..."
-          
+
           # Find image pairs and run benchmarks
           for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
             if [[ -f "$img1" ]]; then
@@ -187,8 +193,11 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/latest/download/hyperfine-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          sudo mv hyperfine /usr/local/bin/
+          HYPERFINE_VERSION="1.18.0"
+          curl -L "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o hyperfine.tar.gz
+          tar -xzf hyperfine.tar.gz
+          sudo mv hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl/hyperfine /usr/local/bin/
+          rm -rf hyperfine.tar.gz hyperfine-v${HYPERFINE_VERSION}-x86_64-unknown-linux-musl
 
       - name: Create benchmark outputs directory
         run: mkdir -p "$BENCHMARK_OUTPUTS_DIR"
@@ -196,7 +205,7 @@ jobs:
       - name: Run pixelmatch benchmarks
         run: |
           echo "🏃 Running pixelmatch benchmarks..."
-          
+
           # Find image pairs and run benchmarks
           for img1 in "$IMAGES_DIR"/*.png "$IMAGES_DIR"/*.jpg; do
             if [[ -f "$img1" ]]; then
