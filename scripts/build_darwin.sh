@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ---- Config ----
 BIN_NAME=${BIN_NAME:-rsdiff}
-DIST_DIR=${DIST_DIR:-packages/bin/binaries}
+DIST_DIR=${DIST_DIR:-../packages/bin/binaries}
 export RUSTFLAGS=${RUSTFLAGS:-}
 
 mkdir -p "$DIST_DIR"

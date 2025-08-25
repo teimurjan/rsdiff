@@ -1,75 +1,38 @@
 #!/bin/sh
 set -eu
 
-basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
-case "$(uname)" in *CYGWIN*) basedir=$(cygpath -w "$basedir");; esac
+# Resolve repo base once
+basedir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# Optional: respect a one-time override (set it in your parent script or env)
+if [ "${ODIFF_BIN:-}" ]; then
+  exec "$ODIFF_BIN" "$@"
+fi
+
+# Cache location for the resolved binary (per checkout)
+cache="$basedir/.odiff-bin-path"
+
+if [ -f "$cache" ] && [ -x "$(cat "$cache")" ]; then
+  exec "$(cat "$cache")" "$@"
+fi
+
+# One-time resolution (super cheap, no env gymnastics)
 PLATFORM=$(uname -s)
 ARCH=$(uname -m)
 
-log() { [ "${RSDIFF_DEBUG:-}" = "1" ] && echo "[rsdiff] $*" >&2 || true; }
-
-# Try executing a candidate quickly. Prefer --version; fall back to just running and ignoring output.
-can_run() {
-  bin="$1"
-  [ -x "$bin" ] || return 1
-  if "$bin" --version >/dev/null 2>&1; then
-    return 0
-  fi
-  # Last resort: quick help (don’t hang—set a short timeout if you want)
-  "$bin" -h >/dev/null 2>&1 || "$bin" >/dev/null 2>&1
-}
-
-pick_linux_x64() {
-  # Allow an explicit override
-  if [ -n "${RSDIFF_BIN:-}" ]; then
-    log "Using override RSDIFF_BIN=$RSDIFF_BIN"
-    echo "$RSDIFF_BIN"; return
-  fi
-
-  GNU_V3="$basedir/../binaries/rsdiff-linux-x64-gnu-v3"
-  MUSL_V3="$basedir/../binaries/rsdiff-linux-x64-musl-v3"
-  MUSL_BASE="$basedir/../binaries/rsdiff-linux-x64"
-
-  # Optional preference knob (gnu|musl-v3|musl)
-  case "${RSDIFF_PREFER:-}" in
-    gnu)
-      if can_run "$GNU_V3"; then log "Picked gnu-v3 by preference"; echo "$GNU_V3"; return; fi
-      ;;
-    musl-v3)
-      if can_run "$MUSL_V3"; then log "Picked musl-v3 by preference"; echo "$MUSL_V3"; return; fi
-      ;;
-    musl)
-      if can_run "$MUSL_BASE"; then log "Picked musl by preference"; echo "$MUSL_BASE"; return; fi
-      ;;
-    "") ;;
-    *) log "Unknown RSDIFF_PREFER=$RSDIFF_PREFER";;
-  esac
-
-  # Auto: try fast -> fast(musl) -> portable
-  if can_run "$GNU_V3";  then log "Picked gnu-v3 (probe ok)";      echo "$GNU_V3";  return; fi
-  if can_run "$MUSL_V3"; then log "Picked musl-v3 (probe ok)";     echo "$MUSL_V3"; return; fi
-  if can_run "$MUSL_BASE"; then log "Picked musl portable";         echo "$MUSL_BASE"; return; fi
-
-  log "No suitable Linux x64 binary found"
-  exit 1
-}
-
-case "$PLATFORM" in
-  Darwin)
-    BINARY="$basedir/../binaries/rsdiff-macos-$([ "$ARCH" = "arm64" ] && echo arm64 || echo x64)"
-    ;;
-  Linux)
-    case "$ARCH" in
-      aarch64|arm64) BINARY="$basedir/../binaries/rsdiff-linux-arm64" ;;
-      x86_64|amd64)  BINARY="$(pick_linux_x64)" ;;
-      *) echo "Unsupported Linux arch: $ARCH" >&2; exit 1 ;;
-    esac
-    ;;
-  MINGW*|MSYS*|CYGWIN*) BINARY="$basedir/../binaries/rsdiff-windows-x64.exe" ;;
+case "$PLATFORM:$ARCH" in
+  Darwin:arm64) bin="$basedir/../odiff-bin/bin/odiff-darwin-arm64" ;;
+  Darwin:x86_64) bin="$basedir/../odiff-bin/bin/odiff-darwin-x64" ;;
+  Linux:aarch64|Linux:arm64) bin="$basedir/../odiff-bin/bin/odiff-linux-arm64" ;;
+  Linux:x86_64|Linux:amd64) bin="$basedir/../odiff-bin/bin/odiff-linux-x64" ;;
+  MINGW*:*|MSYS*:*|CYGWIN*:*) bin="$basedir/../odiff-bin/bin/odiff.exe" ;;
   *) echo "Unsupported platform: $PLATFORM $ARCH" >&2; exit 1 ;;
 esac
 
-[ -x "$BINARY" ] || { echo "Binary not executable: $BINARY" >&2; exit 1; }
-log "Exec $BINARY"
-exec "$BINARY" "$@"
+[ -x "$bin" ] || { echo "Binary not executable: $bin" >&2; exit 1; }
+
+# Cache for future runs
+printf '%s' "$bin" > "$cache"
+
+# Important: replace shell with the binary
+exec "$bin" "$@"

@@ -52,6 +52,15 @@ const YIQ_Y_WEIGHT: f32 = 0.5053;
 const YIQ_I_WEIGHT: f32 = 0.299;
 const YIQ_Q_WEIGHT: f32 = 0.1957;
 
+// Fixed-point scaling for integer luma calculations (16-bit precision)
+const LUMA_SCALE: u32 = 65536;
+const LUMA_Y_R: u32 = (Y_R * LUMA_SCALE as f32) as u32;
+const LUMA_Y_G: u32 = (Y_G * LUMA_SCALE as f32) as u32;
+const LUMA_Y_B: u32 = (Y_B * LUMA_SCALE as f32) as u32;
+
+// Pre-computed threshold for luma gating (scaled to match our fixed point)
+const LUMA_GATE_SCALE: f32 = 0.7; // Conservative gate to avoid missing diffs
+
 /// Main diff function for RGBA images
 pub fn diff_rgba(
     img1: &[u8],
@@ -72,38 +81,76 @@ pub fn diff_rgba(
     // Pre-compute threshold
     let max_delta = 35215.0 * (opts.threshold * opts.threshold);
 
+    // Pre-compute luma gate threshold (scaled for integer comparison)
+    let luma_gate_threshold = (opts.threshold * LUMA_GATE_SCALE * 255.0 * 255.0) as u32;
+
     // Pre-compute alpha blend factor
     let alpha_blend = opts.alpha;
 
-    // Process in chunks for better cache locality
-    const CHUNK_SIZE: usize = 64; // Process 64 pixels at a time
+    // Initialize luma ring buffers for both images
+    let mut luma1_prev = vec![0u32; w];
+    let mut luma1_curr = vec![0u32; w];
+    let mut luma1_next = vec![0u32; w];
+    let mut luma2_prev = vec![0u32; w];
+    let mut luma2_curr = vec![0u32; w];
+    let mut luma2_next = vec![0u32; w];
 
-    for chunk_y in (0..h).step_by(CHUNK_SIZE) {
-        let chunk_h = (CHUNK_SIZE).min(h - chunk_y);
+    // Pre-compute luma for first row
+    if h > 0 {
+        compute_luma_row(img1, 0, w, &mut luma1_curr);
+        compute_luma_row(img2, 0, w, &mut luma2_curr);
+    }
 
-        for y in chunk_y..(chunk_y + chunk_h) {
-            let row_offset = y * w * 4;
+    // Process rows sequentially for better cache locality
+    for y in 0..h {
+        let row_offset = y * w * 4;
 
-            // Process row with better memory access pattern
-            for x in 0..w {
-                let pos = row_offset + x * 4;
+        // Pre-compute luma for next row if it exists
+        if y + 1 < h {
+            compute_luma_row(img1, y + 1, w, &mut luma1_next);
+            compute_luma_row(img2, y + 1, w, &mut luma2_next);
+        }
 
-                // Load pixels once
-                let pixel1 = load_pixel_u32(img1, pos);
-                let pixel2 = load_pixel_u32(img2, pos);
+        // Process row with safe byte-level operations
+        for x in 0..w {
+            let pos = row_offset + x * 4;
+            let pixel1 = load_pixel_u32(img1, pos);
+            let pixel2 = load_pixel_u32(img2, pos);
 
-                if pixel1 == pixel2 {
-                    draw_gray_pixel_fast(img1, pos, alpha_blend, &mut output);
-                    continue;
-                }
+            if pixel1 == pixel2 {
+                // Fast path: equal pixels - write output in one u32 store
+                let gray_pixel = create_gray_pixel_u32(img1, pos, alpha_blend);
+                write_pixel_u32(&mut output, pos, gray_pixel);
+                continue;
+            }
 
+            // Luma gate: check if we need full YIQ calculation
+            let luma1 = luma1_curr[x];
+            let luma2 = luma2_curr[x];
+            let luma_diff = if luma1 > luma2 {
+                luma1 - luma2
+            } else {
+                luma2 - luma1
+            };
+
+            if luma_diff > luma_gate_threshold {
+                // Full YIQ calculation needed
                 let delta = calculate_pixel_color_delta_fast(pixel1, pixel2);
 
                 if delta > max_delta {
                     // Check if this is anti-aliasing
                     if opts.include_aa
-                        && is_pixel_antialiased_optimized(
-                            img1, img2, x as i32, y as i32, w as i32, h as i32,
+                        && is_pixel_antialiased_with_luma(
+                            x as i32,
+                            y as i32,
+                            w as i32,
+                            h as i32,
+                            &luma1_prev,
+                            &luma1_curr,
+                            &luma1_next,
+                            &luma2_prev,
+                            &luma2_curr,
+                            &luma2_next,
                         )
                     {
                         write_color(&mut output, pos, &opts.aa_color);
@@ -112,9 +159,22 @@ pub fn diff_rgba(
                         diff_count += 1;
                     }
                 } else {
-                    draw_gray_pixel_fast(img1, pos, alpha_blend, &mut output);
+                    let gray_pixel = create_gray_pixel_u32(img1, pos, alpha_blend);
+                    write_pixel_u32(&mut output, pos, gray_pixel);
                 }
+            } else {
+                // Luma gate passed - pixel is similar enough
+                let gray_pixel = create_gray_pixel_u32(img1, pos, alpha_blend);
+                write_pixel_u32(&mut output, pos, gray_pixel);
             }
+        }
+
+        // Rotate luma buffers for next iteration
+        if y + 1 < h {
+            std::mem::swap(&mut luma1_prev, &mut luma1_curr);
+            std::mem::swap(&mut luma1_curr, &mut luma1_next);
+            std::mem::swap(&mut luma2_prev, &mut luma2_curr);
+            std::mem::swap(&mut luma2_curr, &mut luma2_next);
         }
     }
 
@@ -124,6 +184,56 @@ pub fn diff_rgba(
         width,
         height,
     }
+}
+
+/// Compute luma for a single row using integer math
+#[inline(always)]
+fn compute_luma_row(img: &[u8], y: usize, width: usize, luma_buffer: &mut [u32]) {
+    let row_offset = y * width * 4;
+    for x in 0..width {
+        let pos = row_offset + x * 4;
+        let r = img[pos] as u32;
+        let g = img[pos + 1] as u32;
+        let b = img[pos + 2] as u32;
+        let a = img[pos + 3] as u32;
+
+        // Integer blend-to-white and luma calculation
+        let luma = if a == 0 {
+            // Transparent pixel -> white
+            LUMA_Y_R + LUMA_Y_G + LUMA_Y_B
+        } else if a == 255 {
+            // Opaque pixel -> direct luma
+            r * LUMA_Y_R + g * LUMA_Y_G + b * LUMA_Y_B
+        } else {
+            // Semi-transparent pixel -> blend with white
+            let alpha = a as f32 / 255.0;
+            let blend_r = (255.0 + (r as f32 - 255.0) * alpha) as u32;
+            let blend_g = (255.0 + (g as f32 - 255.0) * alpha) as u32;
+            let blend_b = (255.0 + (b as f32 - 255.0) * alpha) as u32;
+            blend_r * LUMA_Y_R + blend_g * LUMA_Y_G + blend_b * LUMA_Y_B
+        };
+
+        luma_buffer[x] = luma;
+    }
+}
+
+/// Create a gray pixel as u32 for fast output writing
+#[inline(always)]
+fn create_gray_pixel_u32(img: &[u8], pos: usize, alpha: f32) -> u32 {
+    let r = img[pos] as f32;
+    let g = img[pos + 1] as f32;
+    let b = img[pos + 2] as f32;
+    let a = img[pos + 3] as f32;
+
+    // Calculate luma and apply alpha blend
+    let y = r * Y_R + g * Y_G + b * Y_B;
+    let alpha_factor = a / 255.0;
+    let val = (255.0 + (y - 255.0) * alpha * alpha_factor)
+        .max(0.0)
+        .min(255.0) as u8;
+
+    // Pack as RGBA u32
+    (255u32 << 24) | ((val as u32) << 16) | ((val as u32) << 8) | (val as u32)
 }
 
 /// Load pixel as u32 directly from byte array
@@ -182,54 +292,19 @@ fn calculate_pixel_color_delta_fast(pixel_a: u32, pixel_b: u32) -> f32 {
     YIQ_Y_WEIGHT * y_diff * y_diff + YIQ_I_WEIGHT * i_diff * i_diff + YIQ_Q_WEIGHT * q_diff * q_diff
 }
 
-/// Calculate brightness delta for antialiasing detection
-#[inline(always)]
-fn calculate_brightness_delta_fast(pixel_a: u32, pixel_b: u32) -> f32 {
-    // Extract and blend in one pass
-    let a_a = ((pixel_a >> 24) & 0xFF) as f32;
-    let a_b = ((pixel_a >> 16) & 0xFF) as f32;
-    let a_g = ((pixel_a >> 8) & 0xFF) as f32;
-    let a_r = (pixel_a & 0xFF) as f32;
-
-    let b_a = ((pixel_b >> 24) & 0xFF) as f32;
-    let b_b = ((pixel_b >> 16) & 0xFF) as f32;
-    let b_g = ((pixel_b >> 8) & 0xFF) as f32;
-    let b_r = (pixel_b & 0xFF) as f32;
-
-    let y1 = if a_a == 0.0 {
-        255.0 * (Y_R + Y_G + Y_B) // White pixel
-    } else if a_a == 255.0 {
-        a_r * Y_R + a_g * Y_G + a_b * Y_B
-    } else {
-        let alpha = a_a / 255.0;
-        (255.0 + (a_r - 255.0) * alpha) * Y_R
-            + (255.0 + (a_g - 255.0) * alpha) * Y_G
-            + (255.0 + (a_b - 255.0) * alpha) * Y_B
-    };
-
-    let y2 = if b_a == 0.0 {
-        255.0 * (Y_R + Y_G + Y_B) // White pixel
-    } else if b_a == 255.0 {
-        b_r * Y_R + b_g * Y_G + b_b * Y_B
-    } else {
-        let alpha = b_a / 255.0;
-        (255.0 + (b_r - 255.0) * alpha) * Y_R
-            + (255.0 + (b_g - 255.0) * alpha) * Y_G
-            + (255.0 + (b_b - 255.0) * alpha) * Y_B
-    };
-
-    y1 - y2
-}
-
-/// Optimized antialiasing detection
+/// Antialiasing detection using pre-computed luma buffers
 #[inline]
-fn is_pixel_antialiased_optimized(
-    base_img: &[u8],
-    comp_img: &[u8],
+fn is_pixel_antialiased_with_luma(
     x: i32,
     y: i32,
     width: i32,
     height: i32,
+    luma1_prev: &[u32],
+    luma1_curr: &[u32],
+    luma1_next: &[u32],
+    luma2_prev: &[u32],
+    luma2_curr: &[u32],
+    luma2_next: &[u32],
 ) -> bool {
     // Early boundary check
     let is_edge = x == 0 || x == width - 1 || y == 0 || y == height - 1;
@@ -239,33 +314,43 @@ fn is_pixel_antialiased_optimized(
     let x1 = (x + 1).min(width - 1);
     let y1 = (y + 1).min(height - 1);
 
-    let mut min_delta = f32::MAX;
-    let mut max_delta = f32::MIN;
+    let mut min_delta = u32::MAX;
+    let mut max_delta = u32::MIN;
     let mut min_coord = (0, 0);
     let mut max_coord = (0, 0);
     let mut zeroes = if is_edge { 1 } else { 0 };
 
-    let base_pos = ((y * width + x) * 4) as usize;
-    let base_color = load_pixel_u32(base_img, base_pos);
+    let base_luma = luma1_curr[x as usize];
 
     // Unroll the 3x3 kernel loop for better performance
     for adj_y in y0..=y1 {
-        let row_offset = (adj_y * width * 4) as usize;
+        let luma_buffer = if adj_y == y - 1 {
+            luma1_prev
+        } else if adj_y == y {
+            luma1_curr
+        } else {
+            luma1_next
+        };
+
         for adj_x in x0..=x1 {
             if zeroes >= 3 || (x == adj_x && y == adj_y) {
                 continue;
             }
 
-            let adj_pos = row_offset + (adj_x * 4) as usize;
-            let adjacent_color = load_pixel_u32(base_img, adj_pos);
+            let adj_luma = luma_buffer[adj_x as usize];
 
-            if base_color == adjacent_color {
+            if base_luma == adj_luma {
                 zeroes += 1;
                 if zeroes >= 3 {
                     return false;
                 }
             } else {
-                let delta = calculate_brightness_delta_fast(base_color, adjacent_color);
+                let delta = if base_luma > adj_luma {
+                    base_luma - adj_luma
+                } else {
+                    adj_luma - base_luma
+                };
+
                 if delta < min_delta {
                     min_delta = delta;
                     min_coord = (adj_x, adj_y);
@@ -278,22 +363,35 @@ fn is_pixel_antialiased_optimized(
         }
     }
 
-    if zeroes >= 3 || min_delta == f32::MAX || max_delta == f32::MIN {
+    if zeroes >= 3 || min_delta == u32::MAX || max_delta == u32::MIN {
         return false;
     }
 
-    // Check sibling colors
+    // Check sibling colors using luma buffers
     let (min_x, min_y) = min_coord;
     let (max_x, max_y) = max_coord;
 
-    (has_many_siblings_optimized(base_img, min_x, min_y, width, height)
-        || has_many_siblings_optimized(base_img, max_x, max_y, width, height))
-        && (has_many_siblings_optimized(comp_img, min_x, min_y, width, height)
-            || has_many_siblings_optimized(comp_img, max_x, max_y, width, height))
+    (has_many_siblings_with_luma(
+        min_x, min_y, width, height, luma1_prev, luma1_curr, luma1_next,
+    ) || has_many_siblings_with_luma(
+        max_x, max_y, width, height, luma1_prev, luma1_curr, luma1_next,
+    )) && (has_many_siblings_with_luma(
+        min_x, min_y, width, height, luma2_prev, luma2_curr, luma2_next,
+    ) || has_many_siblings_with_luma(
+        max_x, max_y, width, height, luma2_prev, luma2_curr, luma2_next,
+    ))
 }
 
 #[inline]
-fn has_many_siblings_optimized(img: &[u8], x: i32, y: i32, width: i32, height: i32) -> bool {
+fn has_many_siblings_with_luma(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    luma_prev: &[u32],
+    luma_curr: &[u32],
+    luma_next: &[u32],
+) -> bool {
     if x > width - 1 || y > height - 1 {
         return false;
     }
@@ -310,18 +408,29 @@ fn has_many_siblings_optimized(img: &[u8], x: i32, y: i32, width: i32, height: i
     let x1 = (x + 1).min(width - 1);
     let y1 = (y + 1).min(height - 1);
 
-    let base_pos = ((y * width + x) * 4) as usize;
-    let base_color = load_pixel_u32(img, base_pos);
+    let base_luma = if y == 0 {
+        luma_curr[x as usize]
+    } else if y == height - 1 {
+        luma_prev[x as usize]
+    } else {
+        luma_curr[x as usize]
+    };
 
     for adj_y in y0..=y1 {
-        let row_offset = (adj_y * width * 4) as usize;
+        let luma_buffer = if adj_y == y - 1 {
+            luma_prev
+        } else if adj_y == y {
+            luma_curr
+        } else {
+            luma_next
+        };
+
         for adj_x in x0..=x1 {
             if zeroes >= 3 || (x == adj_x && y == adj_y) {
                 continue;
             }
 
-            let adj_pos = row_offset + (adj_x * 4) as usize;
-            if load_pixel_u32(img, adj_pos) == base_color {
+            if luma_buffer[adj_x as usize] == base_luma {
                 zeroes += 1;
                 if zeroes >= 3 {
                     return true;
@@ -342,17 +451,8 @@ fn write_color(out: &mut [u8], pos: usize, color: &[u8; 3]) {
 }
 
 #[inline(always)]
-fn draw_gray_pixel_fast(img: &[u8], i: usize, alpha: f32, out: &mut [u8]) {
-    // Pre-compute luma using integer math where possible
-    let y = (img[i] as f32 * Y_R + img[i + 1] as f32 * Y_G + img[i + 2] as f32 * Y_B) as u32;
-
-    let a = img[i + 3] as f32 * (1.0 / 255.0); // Multiply by reciprocal
-    let val = ((255.0 + (y as f32 - 255.0) * alpha * a).max(0.0).min(255.0)) as u8;
-
-    out[i] = val;
-    out[i + 1] = val;
-    out[i + 2] = val;
-    out[i + 3] = 255;
+fn write_pixel_u32(out: &mut [u8], pos: usize, pixel: u32) {
+    out[pos..pos + 4].copy_from_slice(&pixel.to_ne_bytes());
 }
 
 // === Image decoding and main diff functions ============================================================
@@ -374,8 +474,8 @@ pub fn diff_images<P: AsRef<std::path::Path>>(
         return Err(format!(
             "Images must have equal dimensions. Image 1: {:?}x{:?}, Image 2: {:?}x{:?}",
             img1.width(),
-            img2.width(),
             img1.height(),
+            img2.width(),
             img2.height()
         )
         .into());
@@ -409,8 +509,8 @@ pub fn diff_bytes(
         return Err(format!(
             "Images must have equal dimensions. Image 1: {:?}x{:?}, Image 2: {:?}x{:?}",
             img1.width(),
-            img2.width(),
             img1.height(),
+            img2.width(),
             img2.height()
         )
         .into());

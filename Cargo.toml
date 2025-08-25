@@ -16,16 +16,12 @@ default = []
 # JSON serialization for CLI output
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
 # Image decoding (now mandatory, disable all extras to keep size small)
 image = { version = "0.24", default-features = false, features = [
   "png",
   "jpeg",
   "tiff",
 ] }
-
-wide = "0.7"
-
 
 [[bin]]
 name = "rsdiff"

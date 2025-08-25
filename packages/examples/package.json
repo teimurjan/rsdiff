@@ -10,7 +10,7 @@
     "@rsdiff/bin": "workspace:*"
   },
   "scripts": {
-    "start": "node index.js"
+    "test": "node index.js"
   },
   "keywords": [],
   "author": "",

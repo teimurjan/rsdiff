@@ -25,7 +25,7 @@ check_tool "hyperfine"
 BENCHMARK_OUTPUTS_DIR="$(pwd)/benchmark-outputs"
 mkdir -p "$BENCHMARK_OUTPUTS_DIR"
 
-IMAGES_DIR="$(pwd)/images"
+IMAGES_DIR="$(pwd)/../images"
 
 # Find image pairs
 echo "🖼️  Finding image pairs for comparison..."
@@ -77,7 +77,7 @@ for pair in "${IMAGE_PAIRS[@]}"; do
         --max-runs 100 \
         --export-json "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.json" \
         --export-markdown "${BENCHMARK_OUTPUTS_DIR}/rsdiff_${pair_name}.md" \
-        "rsdiff \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
+        "../packages/bin/binaries/rsdiff-macos-arm64 \"$img1\" \"$img2\" --output rsdiff_${pair_name}_diff.png"
     
     # Benchmark odiff
     echo "🐌 Benchmarking odiff..."
@@ -88,7 +88,7 @@ for pair in "${IMAGE_PAIRS[@]}"; do
         --max-runs 100 \
         --export-json "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.json" \
         --export-markdown "${BENCHMARK_OUTPUTS_DIR}/odiff_${pair_name}.md" \
-        "node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
+        "../node_modules/.bin/odiff --fail-on-layout=false \"$img1\" \"$img2\" odiff_${pair_name}_diff.png"
     
     # Benchmark pixelmatch
     echo "🔍 Benchmarking pixelmatch..."
@@ -99,5 +99,5 @@ for pair in "${IMAGE_PAIRS[@]}"; do
         --max-runs 100 \
         --export-json "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.json" \
         --export-markdown "${BENCHMARK_OUTPUTS_DIR}/pixelmatch_${pair_name}.md" \
-        "node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
+        "../node_modules/.bin/pixelmatch \"$img1\" \"$img2\" --output pixelmatch_${pair_name}_diff.png"
 done

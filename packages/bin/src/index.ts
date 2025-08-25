@@ -1,6 +1,6 @@
-import * as fs from 'fs';
-import { execSync } from 'child_process';
-import { getBinaryPath } from './platform';
+import * as fs from "fs";
+import { execSync } from "child_process";
+import path from "path";
 
 export interface ComparisonOptions {
   /** Difference threshold (0-1) */
@@ -16,9 +16,6 @@ export interface ComparisonResult {
   diffCount: number;
   totalPixels: number;
   diffPercentage: number;
-  width: number;
-  height: number;
-  durationMs: number;
   outputPath: string | null;
 }
 
@@ -28,9 +25,6 @@ interface RustBinaryResult {
   diff_count: number;
   total_pixels: number;
   diff_percentage: number;
-  width: number;
-  height: number;
-  duration_ms: number;
   output_path?: string;
 }
 
@@ -51,59 +45,51 @@ export async function compare(
   }
 
   // Set default options
-  const {
-    threshold = 0.1,
-    includeAA = false,
-    alpha = 0.1
-  } = options;
+  const { threshold = 0.1, includeAA = false, alpha = 0.1 } = options;
 
   try {
     // Get the appropriate binary for this platform
-    const binaryPath = getBinaryPath();
-    
+    const binaryPath = path.join(__dirname, "..", "bin/rsdiff");
+
     // Build command arguments
     const args = [
       `"${image1Path}"`,
       `"${image2Path}"`,
-      '--json',
+      "--json",
       `--threshold=${threshold}`,
-      `--alpha=${alpha}`
+      `--alpha=${alpha}`,
     ];
-    
+
     if (includeAA) {
-      args.push('--include-aa');
+      args.push("--include-aa");
     }
-    
+
     if (outputPath) {
       args.push(`--output=${outputPath}`);
     }
-    
-    const command = `"${binaryPath}" ${args.join(' ')}`;
-    
+
+    const command = `"${binaryPath}" ${args.join(" ")}`;
+
     // Execute the binary
     const result = execSync(command, {
-      encoding: 'utf8',
-      timeout: 30000
+      encoding: "utf8",
+      timeout: 30000,
     });
-    
+
     // Parse JSON result
     const jsonResult: RustBinaryResult = JSON.parse(result.trim());
-    
+
     if (!jsonResult.success) {
-      throw new Error(jsonResult.error || 'Unknown error from rsdiff');
+      throw new Error(jsonResult.error || "Unknown error from rsdiff");
     }
-    
+
     return {
       success: true,
       diffCount: jsonResult.diff_count,
       totalPixels: jsonResult.total_pixels,
       diffPercentage: jsonResult.diff_percentage,
-      width: jsonResult.width,
-      height: jsonResult.height,
-      durationMs: jsonResult.duration_ms,
-      outputPath: jsonResult.output_path || null
+      outputPath: jsonResult.output_path || null,
     };
-    
   } catch (error: any) {
     if (error.stdout) {
       // Try to parse error from stdout
@@ -116,27 +102,7 @@ export async function compare(
         // Fall through to original error
       }
     }
-    
+
     throw new Error(`Failed to compare images: ${error.message}`);
   }
 }
-
-/**
- * Get information about the current platform and binary
- */
-export { getPlatformInfo } from './platform';
-
-/**
- * Check if the binary exists for the current platform
- */
-export function isBinaryAvailable(): boolean {
-  try {
-    getBinaryPath();
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-// Re-export platform utilities
-export { getBinaryPath, getBinaryName, type PlatformInfo } from './platform';
