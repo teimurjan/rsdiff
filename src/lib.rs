@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
+use wide::{CmpEq, CmpGt, f32x4, f32x8, u32x4, u32x8};
 
 /// Options for the diff algorithm
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +53,39 @@ const YIQ_Y_WEIGHT: f32 = 0.5053;
 const YIQ_I_WEIGHT: f32 = 0.299;
 const YIQ_Q_WEIGHT: f32 = 0.1957;
 
-/// Main diff function for RGBA images
+// SIMD constants - these will be initialized at runtime
+#[inline(always)]
+fn get_simd_constants() -> (
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+    f32x8,
+) {
+    (
+        f32x8::splat(Y_R),          // SIMD_Y_R
+        f32x8::splat(Y_G),          // SIMD_Y_G
+        f32x8::splat(Y_B),          // SIMD_Y_B
+        f32x8::splat(I_R),          // SIMD_I_R
+        f32x8::splat(I_G),          // SIMD_I_G
+        f32x8::splat(I_B),          // SIMD_I_B
+        f32x8::splat(Q_R),          // SIMD_Q_R
+        f32x8::splat(Q_G),          // SIMD_Q_G
+        f32x8::splat(Q_B),          // SIMD_Q_B
+        f32x8::splat(YIQ_Y_WEIGHT), // SIMD_YIQ_Y_WEIGHT
+        f32x8::splat(YIQ_I_WEIGHT), // SIMD_YIQ_I_WEIGHT
+        f32x8::splat(YIQ_Q_WEIGHT), // SIMD_YIQ_Q_WEIGHT
+    )
+}
+
+/// Main diff function for RGBA images with SIMD optimization
 pub fn diff_rgba(
     img1: &[u8],
     img2: &[u8],
@@ -71,49 +104,135 @@ pub fn diff_rgba(
 
     // Pre-compute threshold
     let max_delta = 35215.0 * (opts.threshold * opts.threshold);
+    let simd_max_delta = f32x8::splat(max_delta);
 
     // Pre-compute alpha blend factor
     let alpha_blend = opts.alpha;
+    let simd_alpha_blend = f32x8::splat(alpha_blend);
 
-    // Process in chunks for better cache locality
-    const CHUNK_SIZE: usize = 64; // Process 64 pixels at a time
+    // Get SIMD constants
+    let (
+        simd_y_r,
+        simd_y_g,
+        simd_y_b,
+        simd_i_r,
+        simd_i_g,
+        simd_i_b,
+        simd_q_r,
+        simd_q_g,
+        simd_q_b,
+        simd_yiq_y_weight,
+        simd_yiq_i_weight,
+        simd_yiq_q_weight,
+    ) = get_simd_constants();
 
-    for chunk_y in (0..h).step_by(CHUNK_SIZE) {
-        let chunk_h = (CHUNK_SIZE).min(h - chunk_y);
+    // Process in SIMD-friendly chunks
+    const SIMD_WIDTH: usize = 8; // Process 8 pixels at once
 
-        for y in chunk_y..(chunk_y + chunk_h) {
-            let row_offset = y * w * 4;
+    for y in 0..h {
+        let row_offset = y * w * 4;
+        let mut x = 0;
 
-            // Process row with better memory access pattern
-            for x in 0..w {
-                let pos = row_offset + x * 4;
+        // Process 8 pixels at once with SIMD
+        while x + SIMD_WIDTH <= w {
+            let base_pos = row_offset + x * 4;
 
-                // Load pixels once
-                let pixel1 = load_pixel_u32(img1, pos);
-                let pixel2 = load_pixel_u32(img2, pos);
+            // Load 8 pixels worth of data (32 bytes each image)
+            let pixels1 = load_8_pixels_u32(img1, base_pos);
+            let pixels2 = load_8_pixels_u32(img2, base_pos);
 
-                if pixel1 != pixel2 {
-                    let delta = calculate_pixel_color_delta_fast(pixel1, pixel2);
+            // Check for exact matches first
+            let exact_matches = pixels1.cmp_eq(pixels2);
 
-                    if delta > max_delta {
+            if exact_matches.all() {
+                // All pixels match exactly, draw gray pixels
+                draw_8_gray_pixels_fast(img1, base_pos, simd_alpha_blend, &mut output);
+            } else {
+                // Calculate color deltas for all 8 pixels
+                let deltas = calculate_8_pixel_color_deltas_fast(
+                    pixels1,
+                    pixels2,
+                    &simd_y_r,
+                    &simd_y_g,
+                    &simd_y_b,
+                    &simd_i_r,
+                    &simd_i_g,
+                    &simd_i_b,
+                    &simd_q_r,
+                    &simd_q_g,
+                    &simd_q_b,
+                    &simd_yiq_y_weight,
+                    &simd_yiq_i_weight,
+                    &simd_yiq_q_weight,
+                );
+
+                // Compare with threshold
+                let diff_mask = deltas.cmp_gt(simd_max_delta);
+
+                // Process each pixel in the group
+                for i in 0..SIMD_WIDTH {
+                    let pixel_pos = base_pos + i * 4;
+                    let is_exact_match = exact_matches.as_array_ref()[i] != 0;
+                    let is_diff = diff_mask.as_array_ref()[i] != 0.0;
+
+                    if is_exact_match {
+                        draw_gray_pixel_fast(img1, pixel_pos, alpha_blend, &mut output);
+                    } else if is_diff {
                         // Check if this is anti-aliasing
                         if opts.include_aa
                             && is_pixel_antialiased_optimized(
-                                img1, img2, x as i32, y as i32, w as i32, h as i32,
+                                img1,
+                                img2,
+                                (x + i) as i32,
+                                y as i32,
+                                w as i32,
+                                h as i32,
                             )
                         {
-                            write_color(&mut output, pos, &opts.aa_color);
+                            write_color(&mut output, pixel_pos, &opts.aa_color);
                         } else {
-                            write_color(&mut output, pos, &opts.diff_color);
+                            write_color(&mut output, pixel_pos, &opts.diff_color);
                             diff_count += 1;
                         }
                     } else {
-                        draw_gray_pixel_fast(img1, pos, alpha_blend, &mut output);
+                        draw_gray_pixel_fast(img1, pixel_pos, alpha_blend, &mut output);
+                    }
+                }
+            }
+
+            x += SIMD_WIDTH;
+        }
+
+        // Handle remaining pixels that don't fit in SIMD width
+        while x < w {
+            let pos = row_offset + x * 4;
+
+            // Load pixels once
+            let pixel1 = load_pixel_u32(img1, pos);
+            let pixel2 = load_pixel_u32(img2, pos);
+
+            if pixel1 == pixel2 {
+                draw_gray_pixel_fast(img1, pos, alpha_blend, &mut output);
+            } else {
+                let delta = calculate_pixel_color_delta_fast(pixel1, pixel2);
+
+                if delta > max_delta {
+                    // Check if this is anti-aliasing
+                    if opts.include_aa
+                        && is_pixel_antialiased_optimized(
+                            img1, img2, x as i32, y as i32, w as i32, h as i32,
+                        )
+                    {
+                        write_color(&mut output, pos, &opts.aa_color);
+                    } else {
+                        write_color(&mut output, pos, &opts.diff_color);
+                        diff_count += 1;
                     }
                 } else {
                     draw_gray_pixel_fast(img1, pos, alpha_blend, &mut output);
                 }
             }
+            x += 1;
         }
     }
 
@@ -125,14 +244,169 @@ pub fn diff_rgba(
     }
 }
 
-/// Load pixel as u32 directly from byte array
+/// Load 8 consecutive pixels as u32x8
+#[inline(always)]
+fn load_8_pixels_u32(img: &[u8], base_pos: usize) -> u32x8 {
+    let mut pixels = [0u32; 8];
+    for i in 0..8 {
+        let pos = base_pos + i * 4;
+        pixels[i] = u32::from_ne_bytes([img[pos], img[pos + 1], img[pos + 2], img[pos + 3]]);
+    }
+    u32x8::from(pixels)
+}
+
+/// Calculate color deltas for 8 pixels using SIMD
+#[inline]
+fn calculate_8_pixel_color_deltas_fast(
+    pixels_a: u32x8,
+    pixels_b: u32x8,
+    simd_y_r: &f32x8,
+    simd_y_g: &f32x8,
+    simd_y_b: &f32x8,
+    simd_i_r: &f32x8,
+    simd_i_g: &f32x8,
+    simd_i_b: &f32x8,
+    simd_q_r: &f32x8,
+    simd_q_g: &f32x8,
+    simd_q_b: &f32x8,
+    simd_yiq_y_weight: &f32x8,
+    simd_yiq_i_weight: &f32x8,
+    simd_yiq_q_weight: &f32x8,
+) -> f32x8 {
+    let simd_255 = f32x8::splat(255.0);
+    let simd_zero = f32x8::splat(0.0);
+
+    // Extract RGBA components for all 8 pixels
+    let mask_r = u32x8::splat(0xFF);
+    let mask_g = u32x8::splat(0xFF00);
+    let mask_b = u32x8::splat(0xFF0000);
+    let mask_a = u32x8::splat(0xFF000000);
+
+    let a_r_u32 = pixels_a & mask_r;
+    let a_r = f32x8::new(a_r_u32.as_array_ref().map(|x| x as f32));
+    let a_g_u32: u32x8 = (pixels_a & mask_g) >> 8;
+    let a_g = f32x8::new(a_g_u32.as_array_ref().map(|x| x as f32));
+    let a_b_u32: u32x8 = (pixels_a & mask_b) >> 16;
+    let a_b = f32x8::new(a_b_u32.as_array_ref().map(|x| x as f32));
+    let a_a_u32: u32x8 = (pixels_a & mask_a) >> 24;
+    let a_a = f32x8::new(a_a_u32.as_array_ref().map(|x| x as f32));
+
+    let b_r_u32 = pixels_b & mask_r;
+    let b_r = f32x8::new(b_r_u32.as_array_ref().map(|x| x as f32));
+    let b_g_u32: u32x8 = (pixels_b & mask_g) >> 8;
+    let b_g = f32x8::new(b_g_u32.as_array_ref().map(|x| x as f32));
+    let b_b_u32: u32x8 = (pixels_b & mask_b) >> 16;
+    let b_b = f32x8::new(b_b_u32.as_array_ref().map(|x| x as f32));
+    let b_a_u32: u32x8 = (pixels_b & mask_a) >> 24;
+    let b_a = f32x8::new(b_a_u32.as_array_ref().map(|x| x as f32));
+
+    // Alpha blending with white background for all pixels
+    let alpha_a = a_a / simd_255;
+    let alpha_b = b_a / simd_255;
+
+    // Check for transparent pixels (alpha == 0)
+    let transparent_a = a_a.cmp_eq(simd_zero);
+    let opaque_a = a_a.cmp_eq(simd_255);
+    let transparent_b = b_a.cmp_eq(simd_zero);
+    let opaque_b = b_a.cmp_eq(simd_255);
+
+    // Blend colors
+    let r1 = transparent_a.blend(
+        simd_255,
+        opaque_a.blend(a_r, simd_255 + (a_r - simd_255) * alpha_a),
+    );
+    let g1 = transparent_a.blend(
+        simd_255,
+        opaque_a.blend(a_g, simd_255 + (a_g - simd_255) * alpha_a),
+    );
+    let b1 = transparent_a.blend(
+        simd_255,
+        opaque_a.blend(a_b, simd_255 + (a_b - simd_255) * alpha_a),
+    );
+
+    let r2 = transparent_b.blend(
+        simd_255,
+        opaque_b.blend(b_r, simd_255 + (b_r - simd_255) * alpha_b),
+    );
+    let g2 = transparent_b.blend(
+        simd_255,
+        opaque_b.blend(b_g, simd_255 + (b_g - simd_255) * alpha_b),
+    );
+    let b2 = transparent_b.blend(
+        simd_255,
+        opaque_b.blend(b_b, simd_255 + (b_b - simd_255) * alpha_b),
+    );
+
+    // Calculate YIQ differences
+    let y_diff = (r1 * *simd_y_r + g1 * *simd_y_g + b1 * *simd_y_b)
+        - (r2 * *simd_y_r + g2 * *simd_y_g + b2 * *simd_y_b);
+    let i_diff = (r1 * *simd_i_r - g1 * *simd_i_g - b1 * *simd_i_b)
+        - (r2 * *simd_i_r - g2 * *simd_i_g - b2 * *simd_i_b);
+    let q_diff = (r1 * *simd_q_r - g1 * *simd_q_g + b1 * *simd_q_b)
+        - (r2 * *simd_q_r - g2 * *simd_q_g + b2 * *simd_q_b);
+
+    // Final weighted sum
+    *simd_yiq_y_weight * y_diff * y_diff
+        + *simd_yiq_i_weight * i_diff * i_diff
+        + *simd_yiq_q_weight * q_diff * q_diff
+}
+
+/// Draw 8 gray pixels using SIMD
+#[inline]
+fn draw_8_gray_pixels_fast(img: &[u8], base_pos: usize, alpha_blend: f32x8, out: &mut [u8]) {
+    let simd_255 = f32x8::splat(255.0);
+    let simd_zero = f32x8::splat(0.0);
+    let simd_y_r = f32x8::splat(Y_R);
+    let simd_y_g = f32x8::splat(Y_G);
+    let simd_y_b = f32x8::splat(Y_B);
+
+    // Load 8 pixels worth of RGB data
+    let mut r_vals = [0f32; 8];
+    let mut g_vals = [0f32; 8];
+    let mut b_vals = [0f32; 8];
+    let mut a_vals = [0f32; 8];
+
+    for i in 0..8 {
+        let pos = base_pos + i * 4;
+        r_vals[i] = img[pos] as f32;
+        g_vals[i] = img[pos + 1] as f32;
+        b_vals[i] = img[pos + 2] as f32;
+        a_vals[i] = img[pos + 3] as f32;
+    }
+
+    let r_simd = f32x8::from(r_vals);
+    let g_simd = f32x8::from(g_vals);
+    let b_simd = f32x8::from(b_vals);
+    let a_simd = f32x8::from(a_vals);
+
+    // Calculate luma for all pixels
+    let y_simd = r_simd * simd_y_r + g_simd * simd_y_g + b_simd * simd_y_b;
+
+    // Apply alpha blending
+    let alpha_norm = a_simd / simd_255;
+    let val_simd = (simd_255 + (y_simd - simd_255) * alpha_blend * alpha_norm)
+        .max(simd_zero)
+        .min(simd_255);
+
+    // Store results
+    let results: [f32; 8] = val_simd.into();
+    for i in 0..8 {
+        let pos = base_pos + i * 4;
+        let val = results[i] as u8;
+        out[pos] = val;
+        out[pos + 1] = val;
+        out[pos + 2] = val;
+        out[pos + 3] = 255;
+    }
+}
+
+/// Load pixel as u32 directly from byte array (unchanged)
 #[inline(always)]
 fn load_pixel_u32(img: &[u8], pos: usize) -> u32 {
-    // Use native endianness for consistency
     u32::from_ne_bytes([img[pos], img[pos + 1], img[pos + 2], img[pos + 3]])
 }
 
-/// Optimized pixel color delta calculation
+/// Optimized pixel color delta calculation (unchanged for fallback)
 #[inline(always)]
 fn calculate_pixel_color_delta_fast(pixel_a: u32, pixel_b: u32) -> f32 {
     // Extract components directly
@@ -181,46 +455,79 @@ fn calculate_pixel_color_delta_fast(pixel_a: u32, pixel_b: u32) -> f32 {
     YIQ_Y_WEIGHT * y_diff * y_diff + YIQ_I_WEIGHT * i_diff * i_diff + YIQ_Q_WEIGHT * q_diff * q_diff
 }
 
-/// Calculate brightness delta for antialiasing detection
+/// Calculate brightness delta for antialiasing detection with SIMD optimization
 #[inline(always)]
 fn calculate_brightness_delta_fast(pixel_a: u32, pixel_b: u32) -> f32 {
-    // Extract and blend in one pass
-    let a_a = ((pixel_a >> 24) & 0xFF) as f32;
-    let a_b = ((pixel_a >> 16) & 0xFF) as f32;
-    let a_g = ((pixel_a >> 8) & 0xFF) as f32;
-    let a_r = (pixel_a & 0xFF) as f32;
+    // Use SIMD for single pixel calculations too
+    let pixels_a = u32x4::from([pixel_a, 0, 0, 0]);
+    let pixels_b = u32x4::from([pixel_b, 0, 0, 0]);
 
-    let b_a = ((pixel_b >> 24) & 0xFF) as f32;
-    let b_b = ((pixel_b >> 16) & 0xFF) as f32;
-    let b_g = ((pixel_b >> 8) & 0xFF) as f32;
-    let b_r = (pixel_b & 0xFF) as f32;
+    // Extract components
+    let mask_r = u32x4::splat(0xFF);
+    let mask_g = u32x4::splat(0xFF00);
+    let mask_b = u32x4::splat(0xFF0000);
+    let mask_a = u32x4::splat(0xFF000000);
 
-    let y1 = if a_a == 0.0 {
-        255.0 * (Y_R + Y_G + Y_B) // White pixel
-    } else if a_a == 255.0 {
-        a_r * Y_R + a_g * Y_G + a_b * Y_B
-    } else {
-        let alpha = a_a / 255.0;
-        (255.0 + (a_r - 255.0) * alpha) * Y_R
-            + (255.0 + (a_g - 255.0) * alpha) * Y_G
-            + (255.0 + (a_b - 255.0) * alpha) * Y_B
-    };
+    let a_r_u32 = pixels_a & mask_r;
+    let a_r = f32x4::new(a_r_u32.as_array_ref().map(|x| x as f32));
+    let a_g_u32: u32x4 = (pixels_a & mask_g) >> 8;
+    let a_g = f32x4::new(a_g_u32.as_array_ref().map(|x| x as f32));
+    let a_b_u32: u32x4 = (pixels_a & mask_b) >> 16;
+    let a_b = f32x4::new(a_b_u32.as_array_ref().map(|x| x as f32));
+    let a_a_u32: u32x4 = (pixels_a & mask_a) >> 24;
+    let a_a = f32x4::new(a_a_u32.as_array_ref().map(|x| x as f32));
 
-    let y2 = if b_a == 0.0 {
-        255.0 * (Y_R + Y_G + Y_B) // White pixel
-    } else if b_a == 255.0 {
-        b_r * Y_R + b_g * Y_G + b_b * Y_B
-    } else {
-        let alpha = b_a / 255.0;
-        (255.0 + (b_r - 255.0) * alpha) * Y_R
-            + (255.0 + (b_g - 255.0) * alpha) * Y_G
-            + (255.0 + (b_b - 255.0) * alpha) * Y_B
-    };
+    let b_r_u32 = pixels_b & mask_r;
+    let b_r = f32x4::new(b_r_u32.as_array_ref().map(|x| x as f32));
+    let b_g_u32: u32x4 = (pixels_b & mask_g) >> 8;
+    let b_g = f32x4::new(b_g_u32.as_array_ref().map(|x| x as f32));
+    let b_b_u32: u32x4 = (pixels_b & mask_b) >> 16;
+    let b_b = f32x4::new(b_b_u32.as_array_ref().map(|x| x as f32));
+    let b_a_u32: u32x4 = (pixels_b & mask_a) >> 24;
+    let b_a = f32x4::new(b_a_u32.as_array_ref().map(|x| x as f32));
 
-    y1 - y2
+    let simd_255 = f32x4::splat(255.0);
+    let simd_zero = f32x4::splat(0.0);
+    let simd_y_r = f32x4::splat(Y_R);
+    let simd_y_g = f32x4::splat(Y_G);
+    let simd_y_b = f32x4::splat(Y_B);
+
+    // Alpha blending
+    let alpha_a = a_a / simd_255;
+    let alpha_b = b_a / simd_255;
+
+    let transparent_a = a_a.cmp_eq(simd_zero);
+    let opaque_a = a_a.cmp_eq(simd_255);
+    let transparent_b = b_a.cmp_eq(simd_zero);
+    let opaque_b = b_a.cmp_eq(simd_255);
+
+    let white_luma = simd_255 * (simd_y_r + simd_y_g + simd_y_b);
+
+    let y1 = transparent_a.blend(
+        white_luma,
+        opaque_a.blend(
+            a_r * simd_y_r + a_g * simd_y_g + a_b * simd_y_b,
+            (simd_255 + (a_r - simd_255) * alpha_a) * simd_y_r
+                + (simd_255 + (a_g - simd_255) * alpha_a) * simd_y_g
+                + (simd_255 + (a_b - simd_255) * alpha_a) * simd_y_b,
+        ),
+    );
+
+    let y2 = transparent_b.blend(
+        white_luma,
+        opaque_b.blend(
+            b_r * simd_y_r + b_g * simd_y_g + b_b * simd_y_b,
+            (simd_255 + (b_r - simd_255) * alpha_b) * simd_y_r
+                + (simd_255 + (b_g - simd_255) * alpha_b) * simd_y_g
+                + (simd_255 + (b_b - simd_255) * alpha_b) * simd_y_b,
+        ),
+    );
+
+    let result: [f32; 4] = (y1 - y2).into();
+    result[0]
 }
 
-/// Optimized antialiasing detection
+/// Optimized antialiasing detection (unchanged)
 #[inline]
 fn is_pixel_antialiased_optimized(
     base_img: &[u8],
