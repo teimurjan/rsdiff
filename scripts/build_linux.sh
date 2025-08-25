@@ -30,16 +30,16 @@ rustup target add aarch64-unknown-linux-musl || true
 
 echo "Building Linux x64 (musl, static)"
 cargo zigbuild --release --target x86_64-unknown-linux-musl
-cp "target/x86_64-unknown-linux-musl/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-linux-x64"
+cp "../target/x86_64-unknown-linux-musl/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-linux-x64"
 
 echo "Building Linux arm64 (musl, static)"
 cargo zigbuild --release --target aarch64-unknown-linux-musl
-cp "target/aarch64-unknown-linux-musl/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-linux-arm64"
+cp "../target/aarch64-unknown-linux-musl/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-linux-arm64"
 
 echo "Building Linux x64 (musl, x86-64-v3)"
 RUSTFLAGS="-C target-cpu=x86-64-v3 -C lto=thin -C codegen-units=1" \
   cargo zigbuild --release --target x86_64-unknown-linux-musl
-cp "target/x86_64-unknown-linux-musl/release/$BIN_NAME" \
+cp "../target/x86_64-unknown-linux-musl/release/$BIN_NAME" \
    "$DIST_DIR/${BIN_NAME}-linux-x64-musl-v3"
 
 # ---- Linux x64 (glibc, x86-64-v3) ----
@@ -49,7 +49,7 @@ cp "target/x86_64-unknown-linux-musl/release/$BIN_NAME" \
 echo "Building Linux x64 (glibc, x86-64-v3)"
 RUSTFLAGS="-C target-cpu=x86-64-v3 -C lto=thin -C codegen-units=1" \
   cross build --release --target x86_64-unknown-linux-gnu
-cp target/x86_64-unknown-linux-gnu/release/$BIN_NAME \
+cp ../target/x86_64-unknown-linux-gnu/release/$BIN_NAME \
    "$DIST_DIR/${BIN_NAME}-linux-x64-gnu-v3"
 
 # ---- Done ----

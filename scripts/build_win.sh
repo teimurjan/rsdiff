@@ -27,7 +27,7 @@ rustup target add x86_64-pc-windows-msvc || true
 
 echo "Building Windows x64 (MSVC)"
 cargo xwin build --release --target x86_64-pc-windows-msvc
-cp "target/x86_64-pc-windows-msvc/release/${BIN_NAME}.exe" "$DIST_DIR/${BIN_NAME}-windows-x64.exe"
+cp "../target/x86_64-pc-windows-msvc/release/${BIN_NAME}.exe" "$DIST_DIR/${BIN_NAME}-windows-x64.exe"
 
 # ---- Done ----
 echo "Windows artifacts in $DIST_DIR/:"

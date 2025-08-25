@@ -19,11 +19,11 @@ rustup target add x86_64-apple-darwin  || true
 
 echo "Building macOS arm64"
 cargo build --release --target aarch64-apple-darwin
-cp "target/aarch64-apple-darwin/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-macos-arm64"
+cp "../target/aarch64-apple-darwin/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-macos-arm64"
 
 echo "Building macOS x64"
 cargo build --release --target x86_64-apple-darwin
-cp "target/x86_64-apple-darwin/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-macos-x64"
+cp "../target/x86_64-apple-darwin/release/$BIN_NAME" "$DIST_DIR/${BIN_NAME}-macos-x64"
 
 # ---- Done ----
 echo "macOS artifacts in $DIST_DIR/:"

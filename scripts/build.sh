@@ -14,11 +14,11 @@ command -v cargo  >/dev/null || { echo "cargo is required";  exit 1; }
 
 echo "Building for all platforms..."
 
-echo "Detected macOS, building with build_darwin.sh..."
+echo "Building with build_darwin.sh..."
 ./build_darwin.sh
-echo "Detected Linux, building with build_linux.sh..."
+echo "Building with build_linux.sh..."
 ./build_linux.sh
-echo "Detected Windows, building with build_win.sh..."
+echo "Building with build_win.sh..."
 ./build_win.sh
 
 
